@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <link rel="stylesheet" href="login.css">
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <!-- Three.js CDN for 3D background -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        @media (max-width: 900px) {
+            .container { width: 98vw !important; }
+        }
+        @media (max-width: 700px) {
+            .container { width: 100vw !important; height: auto !important; min-height: 100vh !important; border-radius: 0 !important; margin: 0 !important; }
+            .form-box, .toggle-panel { width: 100% !important; padding: 20px 10px !important; }
+            .toggle-box { display: none !important; }
+            .form-box { position: static !important; }
+        }
+        @media (max-width: 480px) {
+            .container { width: 100vw !important; min-width: 0 !important; }
+            .form-box, .toggle-panel { padding: 10px 2vw !important; }
+            .app-header h2 { font-size: 1.3rem !important; }
+            .btn { font-size: 1rem !important; }
+        }
+        @media (max-width: 350px) {
+            .container { width: 100vw !important; }
+            .form-box, .toggle-panel { padding: 2vw !important; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Canvas for the 3D galaxy background -->
+    <canvas id="galaxyCanvas"></canvas>
+    <!-- Static Header -->
+    <div class="app-header">
+        <h2>Login</h2>
+    </div>
+
+    <div class="container">
+        <div class="form-box login">
+            <form action="#">
+                <h1>Login</h1>
+                <div class="input-box">
+                    <input type="text" placeholder="Email" required> <!-- Changed placeholder to "Email" -->
+                    <i class='bx bxs-envelope'></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" placeholder="Password" required>
+                    <i class='bx bxs-lock-alt' ></i>
+                </div>
+                <div class="forgot-link">
+                    <a href="#">Forgot Password?</a>
+                </div>
+                <button type="submit" class="btn">Login</button>
+                <p>or login with social platforms</p>
+                <div class="social-icons">
+                    <a href="#" onclick="signInWithGoogle()"><i class='bx bxl-google' ></i></a>
+                    <a href="#" onclick="signInWithGithub()"><i class='bx bxl-github' ></i></a>
+                    <a href="#" onclick="signInWithMicrosoft()"><i class='bx bxl-microsoft' ></i></a>
+                </div>
+            </form>
+        </div>
+
+        <div class="form-box register">
+            <form action="#">
+                <h1>Registration</h1>
+                <div class="input-box">
+                    <input type="text" placeholder="Username" required>
+                    <i class='bx bxs-user'></i>
+                </div>
+                <div class="input-box">
+                    <input type="email" placeholder="Email" required>
+                    <i class='bx bxs-envelope' ></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" placeholder="Password" required>
+                    <i class='bx bxs-lock-alt' ></i>
+                </div>
+                <button type="submit" class="btn">Register</button>
+                <p>or register with social platforms</p>
+                <div class="social-icons">
+                    <a href="#" onclick="signInWithGoogle()"><i class='bx bxl-google' ></i></a>
+                    <a href="#" onclick="signInWithGithub()"><i class='bx bxl-github' ></i></a>
+                    <a href="#" onclick="signInWithMicrosoft()"><i class='bx bxl-microsoft' ></i></a>
+                </div>
+            </form>
+        </div>
+
+        <div class="toggle-box">
+            <div class="toggle-panel toggle-left">
+                <h1>Hello, Welcome!</h1>
+                <p>Don't have an account?</p>
+                <button class="btn register-btn">Register</button>
+            </div>
+
+            <div class="toggle-panel toggle-right">
+                <h1>Welcome Back!</h1>
+                <p>Already have an account?</p>
+                <button class="btn login-btn">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add responsive/mobile layout here (hidden on desktop, shown on mobile) -->
+    <div class="login-outer" id="loginOuter">
+        <!-- Top Panel -->
+        <div class="panel-top" id="panelTop">
+            <h1 id="panelTopTitle">Hello, Welcome!</h1>
+            <p id="panelTopDesc">Don't have an account?</p>
+            <button class="btn" id="switchBtn">Register</button>
+        </div>
+        <!-- Bottom Panel -->
+        <div class="panel-bottom" id="panelBottom">
+            <form id="loginForm">
+                <h1 id="formTitle">Login</h1>
+                <div class="input-box">
+                    <input type="text" placeholder="Email" required>
+                    <i class='bx bxs-envelope'></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" placeholder="Password" required>
+                    <i class='bx bxs-lock-alt'></i>
+                </div>
+                <div class="forgot-link">
+                    <a href="#">Forgot Password?</a>
+                </div>
+                <button type="submit" class="btn">Login</button>
+                <p>or login with social platforms</p>
+                <div class="social-icons">
+                    <a href="#" onclick="signInWithGoogle()"><i class='bx bxl-google'></i></a>
+                    <a href="#" onclick="signInWithGithub()"><i class='bx bxl-github'></i></a>
+                    <a href="#" onclick="signInWithMicrosoft()"><i class='bx bxl-microsoft'></i></a>
+                </div>
+                <span id="guestLoginLink" class="guestLoginLink">Or Continue as Guest</span>
+            </form>
+            <form id="registerForm" style="display:none;">
+                <h1 id="formTitle">Registration</h1>
+                <div class="input-box">
+                    <input type="text" placeholder="Username" required>
+                    <i class='bx bxs-user'></i>
+                </div>
+                <div class="input-box">
+                    <input type="email" placeholder="Email" required>
+                    <i class='bx bxs-envelope'></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" placeholder="Password" required>
+                    <i class='bx bxs-lock-alt'></i>
+                </div>
+                <button type="submit" class="btn">Register</button>
+                <p>or register with social platforms</p>
+                <div class="social-icons">
+                    <a href="#" onclick="signInWithGoogle()"><i class='bx bxl-google'></i></a>
+                    <a href="#" onclick="signInWithGithub()"><i class='bx bxl-github'></i></a>
+                    <a href="#" onclick="signInWithMicrosoft()"><i class='bx bxl-microsoft'></i></a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="config-file.js"></script>
+    <script src="auth-check.js"></script>
+    <script src="login.js"></script>
+</body>
+</html>

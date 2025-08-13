@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Teacher Dashboard</title>
+  <link rel="stylesheet" href="index.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+  <script src="config-file.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <div class="navbar">
+    <button id="tabList" class="tab active">My Tests</button>
+    <button id="tabEditor" class="tab">Create / Edit</button>
+    <button id="tabMonitor" class="tab">Monitor</button>
+  </div>
+
+  <div class="container">
+    <div id="listSection" class="section">
+      <div class="row" style="margin-bottom:10px">
+        <button id="newTestBtn" class="btn icon">➕ New Test</button>
+      </div>
+      <div id="testsWrap" class="test-list"></div>
+    </div>
+
+    <div id="editorSection" class="section" style="display:none">
+      <div class="header-row">
+        <input id="testTitle" class="input" type="text" placeholder="Test title" required>
+        <input id="testDuration" class="input" type="number" min="1" placeholder="Duration (minutes)" required>
+      </div>
+      <div id="questions"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="addQuestionBtn" class="btn secondary">+ Add Question</button>
+        <button id="publishBtn" class="btn">Publish</button>
+        <div id="joinCode" style="margin-left:auto"></div>
+      </div>
+    </div>
+
+    <div id="monitorSection" class="section" style="display:none">
+      <div class="row" style="margin-bottom:8px">
+        <span id="monitorTestTitle" class="code-pill" style="background:#1b2636;color:var(--ink)"></span>
+        <span id="monitorCode" class="code-pill"></span>
+      </div>
+      <ul id="studentList"></ul>
+    </div>
+  </div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db=firebase.firestore(), auth=firebase.auth();
+
+const tabList=document.getElementById('tabList');
+const tabEditor=document.getElementById('tabEditor');
+const tabMonitor=document.getElementById('tabMonitor');
+const listSection=document.getElementById('listSection');
+const editorSection=document.getElementById('editorSection');
+const monitorSection=document.getElementById('monitorSection');
+
+function show(section){
+  [listSection,editorSection,monitorSection].forEach(s=>s.style.display='none');
+  [tabList,tabEditor,tabMonitor].forEach(t=>t.classList.remove('active'));
+  if(section==='list'){listSection.style.display='block';tabList.classList.add('active')}
+  if(section==='editor'){editorSection.style.display='block';tabEditor.classList.add('active')}
+  if(section==='monitor'){monitorSection.style.display='block';tabMonitor.classList.add('active')}
+}
+tabList.onclick=()=>show('list'); tabEditor.onclick=()=>show('editor'); tabMonitor.onclick=()=>show('monitor');
+
+let currentCode=null, currentTest=null, unsubMonitor=null;
+
+auth.onAuthStateChanged(async u=>{
+  if(!u) return;
+  loadTests();
+});
+
+async function loadTests(){
+  const u=auth.currentUser; if(!u) return;
+  const snap=await db.collection('tests').where('teacherId','==',u.uid).orderBy('createdAt','desc').get().catch(async e=>{
+    const s2=await db.collection('tests').where('teacherId','==',u.uid).get(); return s2;
+  });
+  const wrap=document.getElementById('testsWrap'); wrap.innerHTML='';
+  if(snap.empty){wrap.innerHTML='<div class="test-item"><div class="meta"><strong>No tests yet.</strong><span class="sub">Click “New Test” to create one.</span></div></div>';return;}
+  snap.forEach(doc=>{
+    const t=doc.data(); const div=document.createElement('div'); div.className='test-item';
+    div.innerHTML=`
+      <div class="meta">
+        <div style="font-weight:800">${t.title||'Untitled'}</div>
+        <div class="sub" style="color:var(--sub)">Duration: ${t.duration||0} min</div>
+      </div>
+      <div class="row">
+        <span class="code-pill">Code: ${doc.id}</span>
+        <button class="btn ghost" data-code="${doc.id}" data-act="edit">Edit</button>
+        <button class="btn ghost" data-code="${doc.id}" data-title="${t.title||''}" data-act="monitor">Monitor</button>
+      </div>`;
+    wrap.appendChild(div);
+  });
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.onclick=async (e)=>{
+      const code=e.currentTarget.dataset.code;
+      const act=e.currentTarget.dataset.act;
+      if(act==='edit'){ openEditor(code); }
+      if(act==='monitor'){ openMonitor(code,e.currentTarget.dataset.title||''); }
+    }
+  })
+}
+
+document.getElementById('newTestBtn').onclick=()=>{
+  currentCode=null; currentTest=null;
+  document.getElementById('testTitle').value='';
+  document.getElementById('testDuration').value='';
+  document.getElementById('questions').innerHTML='';
+  addQuestionCard();
+  document.getElementById('joinCode').innerHTML='';
+  show('editor');
+};
+
+async function openEditor(code){
+  const doc=await db.collection('tests').doc(code).get();
+  if(!doc.exists) return;
+  currentCode=code; currentTest=doc.data();
+  document.getElementById('testTitle').value=currentTest.title||'';
+  document.getElementById('testDuration').value=currentTest.duration||60;
+  const qWrap=document.getElementById('questions'); qWrap.innerHTML='';
+  (currentTest.questions||[]).forEach(q=>addQuestionCard(q));
+  document.getElementById('joinCode').innerHTML=`<div class="test-code-banner">Test Code: ${code}</div>`;
+  show('editor');
+}
+
+function addOption(el){
+  const box=el.parentElement;
+  const n=box.querySelectorAll('.option-input').length+1;
+  const input=document.createElement('input');
+  input.className='option-input'; input.placeholder=`Option ${n}`;
+  input.oninput=syncCorrectOptions;
+  box.insertBefore(input,el);
+  syncCorrectOptions();
+}
+
+function deleteCard(el){
+  el.closest('.question-card').remove();
+  syncCorrectOptions();
+}
+
+function toggleRequired(el){
+  el.classList.toggle('on');
+}
+
+function syncCorrectOptions(){
+  document.querySelectorAll('.question-card').forEach(card=>{
+    const opts=[...card.querySelectorAll('.option-input')].map(i=>i.value.trim()).filter(Boolean);
+    const sel=card.querySelector('.correct-select');
+    const prev=sel.value;
+    sel.innerHTML='';
+    opts.forEach((o,i)=>{
+      const op=document.createElement('option'); op.value=String(i+1); op.textContent=`Correct: ${i+1} – ${o||'Option '+(i+1)}`;
+      sel.appendChild(op);
+    });
+    if(opts.length===0){ const op=document.createElement('option'); op.value='1'; op.textContent='Correct: 1'; sel.appendChild(op); }
+    if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
+  });
+}
+
+function addQuestionCard(pref){
+  const card=document.createElement('div'); card.className='question-card';
+  card.innerHTML=`
+    <div class="actions">
+      <span class="req-label">Required</span>
+      <div class="switch ${pref&&pref.required?'on':''}" onclick="toggleRequired(this)"><div class="knob"></div></div>
+      <button class="icon-btn" title="Delete" onclick="deleteCard(this)">🗑</button>
+    </div>
+    <div class="q-grid">
+      <input class="q-text" placeholder="Question" value="${pref?.question?pref.question.replace(/"/g,'&quot;'):''}">
+      <select class="select q-type">
+        <option value="multiple"${pref?.type==='multiple'?' selected':''}>Multiple choice</option>
+        <option value="checkboxes"${pref?.type==='checkboxes'?' selected':''}>Checkboxes</option>
+        <option value="dropdown"${pref?.type==='dropdown'?' selected':''}>Dropdown</option>
+      </select>
+    </div>
+    <div class="options"></div>
+    <div class="correct-wrap">
+      <div></div>
+      <select class="select correct-select"></select>
+    </div>
+  `;
+  const opts=card.querySelector('.options');
+  const base=(pref?.options&&pref.options.length?pref.options:['','']).slice();
+  base.forEach((v,i)=>{
+    const inp=document.createElement('input');
+    inp.className='option-input'; inp.placeholder=`Option ${i+1}`; inp.value=v||'';
+    inp.oninput=syncCorrectOptions;
+    opts.appendChild(inp);
+  });
+  const add=document.createElement('div'); add.className='add-option'; add.textContent='+ Add option'; add.onclick=function(){addOption(this)}
+  opts.appendChild(add);
+  document.getElementById('questions').appendChild(card);
+  syncCorrectOptions();
+  if(pref?.correct) card.querySelector('.correct-select').value=String(pref.correct);
+}
+
+window.addOption=addOption;
+window.deleteCard=deleteCard;
+window.toggleRequired=toggleRequired;
+
+document.getElementById('addQuestionBtn').onclick=()=>addQuestionCard();
+
+function validate(){
+  const title=document.getElementById('testTitle').value.trim();
+  const dur=parseInt(document.getElementById('testDuration').value);
+  if(!title) return {ok:false,msg:'Enter test title',el:document.getElementById('testTitle')};
+  if(!(dur>0)) return {ok:false,msg:'Duration must be > 0',el:document.getElementById('testDuration')};
+  const cards=[...document.querySelectorAll('.question-card')];
+  if(cards.length===0) return {ok:false,msg:'Add at least one question'};
+  for(let i=0;i<cards.length;i++){
+    const c=cards[i];
+    const q=c.querySelector('.q-text').value.trim();
+    const opts=[...c.querySelectorAll('.option-input')].map(x=>x.value.trim()).filter(Boolean);
+    const corr=parseInt(c.querySelector('.correct-select').value||'1');
+    if(!q) return {ok:false,msg:`Q${i+1}: question is required`,el:c.querySelector('.q-text')};
+    if(opts.length<2) return {ok:false,msg:`Q${i+1}: at least 2 options`,el:c.querySelector('.option-input')};
+    if(!(corr>=1&&corr<=opts.length)) return {ok:false,msg:`Q${i+1}: correct must be 1..${opts.length}`,el:c.querySelector('.correct-select')};
+  }
+  return {ok:true};
+}
+
+document.getElementById('publishBtn').onclick=async()=>{
+  const v=validate(); if(!v.ok){alert(v.msg);v.el?.focus();return;}
+  const title=document.getElementById('testTitle').value.trim();
+  const duration=parseInt(document.getElementById('testDuration').value);
+  const qCards=[...document.querySelectorAll('.question-card')];
+  const questions=qCards.map(c=>({
+    question:c.querySelector('.q-text').value.trim(),
+    type:c.querySelector('.q-type').value,
+    options:[...c.querySelectorAll('.option-input')].map(i=>i.value.trim()).filter(Boolean),
+    correct:parseInt(c.querySelector('.correct-select').value),
+    required:c.querySelector('.switch').classList.contains('on')
+  }));
+
+  let code=currentCode || Math.floor(100000+Math.random()*900000).toString();
+  const payload={title,duration,questions,teacherId:auth.currentUser?.uid||'unknown',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  await db.collection('tests').doc(code).set(payload);
+  currentCode=code; currentTest=payload;
+  document.getElementById('joinCode').innerHTML=`<div class="test-code-banner">Test Code: ${code}</div>`;
+  await loadTests();
+  show('list');
+};
+
+function openMonitor(code,title){
+  currentCode=code;
+  document.getElementById('monitorTestTitle').textContent=title||'';
+  document.getElementById('monitorCode').textContent=`Code: ${code}`;
+  if(unsubMonitor) unsubMonitor();
+  const list=document.getElementById('studentList');
+  unsubMonitor=db.collection('tests').doc(code).collection('responses').onSnapshot(async snap=>{
+    const testDoc=await db.collection('tests').doc(code).get();
+    const test=testDoc.data()||{questions:[]}; const total=test.questions.length;
+    list.innerHTML='';
+    snap.forEach(d=>{
+      const data=d.data(); const answered=countAnswered(data.answers); const score=calcScore(test.questions,data.answers||{});
+      const li=document.createElement('li');
+      const status=data.tabStatus==='Submitted'?'✔ Submitted':(data.tabStatus==='Out of Tab'?'Out of Tab':'Active');
+      li.className=(data.tabStatus==='Out of Tab')?'out':'active';
+      li.innerHTML=`<div><strong>${data.name||'Student'}</strong></div><div>Answered: ${answered}/${total} • Score: ${score}/${total} • ${status}</div>`;
+      list.appendChild(li);
+    });
+  });
+  show('monitor');
+}
+
+function countAnswered(answers){
+  if(!answers) return 0;
+  let n=0; for(const k in answers){ const v=answers[k]; if(Array.isArray(v)?v.length>0:v!==undefined&&v!==null) n++; }
+  return n;
+}
+function calcScore(questions,answers){
+  let s=0;
+  questions.forEach((q,i)=>{
+    const key='q'+i;
+    if(q.type==='checkboxes'){
+      const corr=[q.correct].flat().sort((a,b)=>a-b);
+      const got=[...(answers?.[key]||[])].map(Number).sort((a,b)=>a-b);
+      if(corr.length===got.length && corr.every((v,idx)=>v===got[idx])) s++;
+    }else{
+      if((answers?.[key]|0)===q.correct) s++;
+    }
+  });
+  return s;
+}
+</script>
+</body>
+</html>
