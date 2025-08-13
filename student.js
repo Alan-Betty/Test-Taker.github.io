@@ -12,11 +12,10 @@ let currentCode = '', studentName = '', order = [], test = null;
 let answers = {};
 let unsubTestStatus = null;
 let timerInterval = null;
+let hasSubmitted = false; // track submission state
 
-// ---- Small CSS injected so you don't need to edit your CSS files ----
 (function injectStyles() {
     const css = `
-  /* Loader */
   .loader {
     border: 4px solid var(--bg,#0f1720);
     border-top: 4px solid var(--ink,#e6edf3);
@@ -26,24 +25,14 @@ let timerInterval = null;
     margin: 0 auto 10px;
   }
   @keyframes spin { 100% { transform: rotate(360deg); } }
-
-  /* Timer circle */
   .timer-wrap { display:flex; gap:10px; align-items:center; justify-content:center; margin:10px 0; }
   .timer-svg { width:64px; height:64px; transform: rotate(-90deg); }
   .timer-bg { stroke: rgba(255,255,255,0.15); stroke-width: 8; fill: none; }
   .timer-fg { stroke: var(--ink,#e6edf3); stroke-width: 8; fill: none; stroke-linecap: round; stroke-dasharray: 283; stroke-dashoffset: 0; transition: stroke-dashoffset .3s linear; }
   .timer-text { font-weight: 800; letter-spacing: .5px; color: var(--ink,#e6edf3); }
   .timer-tag { font-size:.85rem; color: var(--sub,#9fb0c0); }
-
-  /* Results pop */
   .pop-animation { animation: pop 600ms ease forwards; }
-  @keyframes pop {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.25); }
-    100% { transform: scale(1); }
-  }
-
-  /* Waiting block */
+  @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.25); } 100% { transform: scale(1); } }
   #waitScreen { padding: 16px; border-radius: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
   `;
     const el = document.createElement('style');
@@ -51,7 +40,7 @@ let timerInterval = null;
     document.head.appendChild(el);
 })();
 
-// ---- Build timer UI (SVG circle + label) ----
+// Timer UI
 const timerWrap = document.createElement('div');
 timerWrap.className = 'timer-wrap';
 timerWrap.style.display = 'none';
@@ -66,7 +55,7 @@ timerWrap.innerHTML = `
   </div>
 `;
 
-// ---- Waiting + Results screens ----
+// Waiting + Results screens
 const waitScreen = document.createElement('div');
 waitScreen.id = 'waitScreen';
 waitScreen.style.display = 'none';
@@ -88,7 +77,6 @@ resultScreen.innerHTML = `
   <button id="joinAnotherBtn" class="btn" style="margin-top:12px;">Join Another Test</button>
 `;
 
-// Insert helper blocks
 const testArea = document.getElementById('testArea');
 testArea.before(waitScreen);
 testArea.before(timerWrap);
@@ -96,25 +84,21 @@ document.body.appendChild(resultScreen);
 
 document.getElementById('joinAnotherBtn')?.addEventListener('click', () => location.reload());
 
-// Utility: hide join form container if present
 function hideJoinForm() {
     const joinForm = document.getElementById('joinForm') || document.querySelector('.join-section');
     if (joinForm) joinForm.style.display = 'none';
     else {
-        // fallback: hide the inputs themselves
         ['studentName', 'testCode', 'joinBtn'].forEach(id => {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
         });
     }
 }
 
-// --- Join flow ---
 document.getElementById('joinBtn').onclick = async () => {
     currentCode = document.getElementById('testCode').value.trim();
     studentName = document.getElementById('studentName').value.trim();
     if (!currentCode || !studentName) { alert('Enter your name and test code'); return; }
 
-    // Hide join UI
     hideJoinForm();
 
     const tDoc = await db.collection('tests').doc(currentCode).get();
@@ -131,24 +115,22 @@ document.getElementById('joinBtn').onclick = async () => {
         await respRef.set({ name: studentName, tabStatus: 'Active', answers: {}, order }, { merge: true });
     }
 
-    // Meta header
     document.getElementById('testMeta').style.display = 'flex';
     document.getElementById('testTitle').textContent = test.title || '';
     document.getElementById('testBanner').textContent = 'Code: ' + currentCode;
 
-    // Presence
+    // Presence tracking — skip tab change after submission
     document.addEventListener('visibilitychange', async () => {
+        if (hasSubmitted) return; // prevent "Out of Tab" after submit
         await respRef.set({ name: studentName, tabStatus: document.hidden ? 'Out of Tab' : 'Active' }, { merge: true });
     });
     await respRef.set({ name: studentName, tabStatus: 'Active' }, { merge: true });
 
-    // Status listener (pending -> active -> ended)
     unsubTestStatus = db.collection('tests').doc(currentCode).onSnapshot(doc => {
         if (!doc.exists) return;
         const data = doc.data(); test = data;
 
         if (data.status === 'pending' || !data.status) {
-            // Waiting for host
             waitScreen.style.display = 'block';
             waitScreen.querySelector('h2').textContent = 'Host has not started the test yet...';
             testArea.style.display = 'none';
@@ -157,7 +139,6 @@ document.getElementById('joinBtn').onclick = async () => {
         }
 
         if (data.status === 'active') {
-            // Taking test
             waitScreen.style.display = 'none';
             resultScreen.style.display = 'none';
             testArea.style.display = 'block';
@@ -167,16 +148,13 @@ document.getElementById('joinBtn').onclick = async () => {
         }
 
         if (data.status === 'ended') {
-            // Ended — only show results if not already showing
             if (testArea.style.display !== 'none') {
-                autoSubmit(); // will hide test & show results
+                autoSubmit();
             }
         }
-
     });
 };
 
-// --- Timer (SVG circle progress) ---
 function startTimer(startedAt, durationMin) {
     clearInterval(timerInterval);
     const fg = document.getElementById('timerFg');
@@ -184,7 +162,7 @@ function startTimer(startedAt, durationMin) {
     if (!startedAt || !durationMin) { label.textContent = '--:--'; return; }
 
     const endTime = startedAt.getTime() + durationMin * 60000;
-    const circumference = 2 * Math.PI * 45; // r=45
+    const circumference = 2 * Math.PI * 45;
 
     const tick = () => {
         const now = Date.now();
@@ -208,7 +186,6 @@ function startTimer(startedAt, durationMin) {
     timerInterval = setInterval(tick, 1000);
 }
 
-// --- Render Questions (preserves your original logic) ---
 function renderQuestions() {
     const form = document.getElementById('testForm'); form.innerHTML = '';
     order.forEach((origIdx, i) => {
@@ -257,14 +234,15 @@ function renderQuestions() {
     };
 }
 
-// --- Manual submit just calls autoSubmit ---
 document.getElementById('submitBtn').onclick = async (e) => {
     e.preventDefault();
     autoSubmit();
 };
 
-// --- Auto submit (does NOT block on required when time ends/host ends) ---
 async function autoSubmit() {
+    if (hasSubmitted) return; // prevent double submit
+    hasSubmitted = true;
+
     if (!currentCode || !test) return;
 
     const form = document.getElementById('testForm');
@@ -280,7 +258,6 @@ async function autoSubmit() {
     showResults();
 }
 
-// --- Results screen with animated score + pop if >= 60% ---
 async function showResults() {
     testArea.style.display = 'none';
     timerWrap.style.display = 'none';
@@ -313,7 +290,6 @@ async function showResults() {
             display++;
             requestAnimationFrame(step);
         } else {
-            // pop animation if >= 60%
             if (total > 0 && (correct / total) * 100 >= 60) scoreEl.classList.add('pop-animation');
         }
     };

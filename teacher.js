@@ -38,40 +38,130 @@ auth.onAuthStateChanged(async u => {
 async function loadTests() {
     const u = auth.currentUser;
     if (!u) return;
-    const snap = await db.collection('tests').where('teacherId', '==', u.uid).orderBy('createdAt', 'desc').get().catch(async e => {
-        const s2 = await db.collection('tests').where('teacherId', '==', u.uid).get(); return s2;
-    });
-    const wrap = document.getElementById('testsWrap'); wrap.innerHTML = '';
-    if (snap.empty) {
-        wrap.innerHTML = '<div class="test-item"><div class="meta"><strong>No tests yet.</strong><span class="sub">Click “New Test” to create one.</span></div></div>'; return;
+
+    let snap;
+    try {
+        snap = await db.collection('tests')
+            .where('teacherId', '==', u.uid)
+            .orderBy('createdAt', 'desc')
+            .get();
+    } catch {
+        snap = await db.collection('tests').where('teacherId', '==', u.uid).get();
     }
+
+    const wrap = document.getElementById('testsWrap'); 
+    wrap.innerHTML = '';
+    if (snap.empty) {
+        wrap.innerHTML = '<div class="test-item"><div class="meta"><strong>No tests yet.</strong><span class="sub">Click “New Test” to create one.</span></div></div>'; 
+        return;
+    }
+
     snap.forEach(doc => {
         const t = doc.data();
-        const div = document.createElement('div'); div.className = 'test-item';
+        const div = document.createElement('div'); 
+        div.className = 'test-item';
+        const created = t.createdAt?.toDate ? t.createdAt.toDate() : null;
+        const tsString = created ? created.toLocaleString() : 'Unknown time';
+
+        // Add placeholders for counts and status
         div.innerHTML = `
       <div class="meta">
         <div style="font-weight:800">${t.title || 'Untitled'}</div>
-        <div class="sub" style="color:var(--sub)">Duration: ${t.duration || 0} min</div>
+        <div class="sub" style="color:var(--sub)">
+            Duration: ${t.duration || 0} min • Created: ${tsString}
+        </div>
+        <div style="margin-top:4px; font-size:0.9em;">
+            <span class="status-label">Status: ${t.status || 'Pending'}</span>
+            • <span class="submitted-count">Submitted: 0</span>
+            / <span class="active-count">Active: 0</span>
+        </div>
       </div>
       <div class="row">
         <span class="code-pill">Code: ${doc.id}</span>
         <button class="btn ghost" data-code="${doc.id}" data-act="edit">Edit</button>
         <button class="btn ghost" data-code="${doc.id}" data-title="${t.title || ''}" data-act="monitor">Monitor</button>
+        <button class="btn ghost delete-btn" data-code="${doc.id}" data-act="delete">🗑</button>
       </div>`;
         wrap.appendChild(div);
+
+        // Real-time listener for responses of this test only
+        db.collection('tests').doc(doc.id)
+            .collection('responses')
+            .where('testCode', '==', doc.id) // filter only this test's participants
+            .onSnapshot(resSnap => {
+                let submitted = 0, active = 0;
+                resSnap.forEach(d => {
+                    const data = d.data();
+                    if (data.tabStatus === 'Submitted') submitted++;
+                    else active++;
+                });
+                div.querySelector('.submitted-count').textContent = `Submitted: ${submitted}`;
+                div.querySelector('.active-count').textContent = `Active: ${active}`;
+
+                // Update status color & text
+                const statusEl = div.querySelector('.status-label');
+                let label = t.status || 'Pending';
+                let color = '#555';
+
+                if (t.status === 'pending') { 
+                    label = 'Pending'; 
+                    color = 'red'; 
+                } 
+                else if (t.status === 'active') {
+                    label = 'Started'; 
+                    color = 'green';
+                    if (t.startedAt && t.duration) {
+                        const startedMs = t.startedAt.toMillis ? t.startedAt.toMillis() : new Date(t.startedAt).getTime();
+                        const total = (t.duration || 0) * 60000;
+                        const elapsed = Math.max(0, Date.now() - startedMs);
+                        const remaining = Math.max(0, total - elapsed);
+                        if (elapsed >= total / 2 && remaining > 0) { 
+                            label = 'Midway'; 
+                            color = 'orange'; 
+                        }
+                    }
+                } 
+                else if (t.status === 'ended') { 
+                    label = 'Ended'; 
+                    color = 'red'; 
+                }
+
+                statusEl.textContent = `Status: ${label}`;
+                statusEl.style.color = color;
+                statusEl.style.fontWeight = 'bold';
+            });
     });
+
+    // Button click handlers including Delete
     wrap.querySelectorAll('button').forEach(b => {
-        b.onclick = (e) => {
+        b.onclick = async (e) => {
             const code = e.currentTarget.dataset.code;
             const act = e.currentTarget.dataset.act;
             if (act === 'edit') { openEditor(code); }
-            if (act === 'monitor') { openMonitor(code, e.currentTarget.dataset.title || ''); }
+            else if (act === 'monitor') { openMonitor(code, e.currentTarget.dataset.title || ''); }
+            else if (act === 'delete') {
+                if (confirm('Are you sure you want to delete this test?')) {
+                    // Delete test doc
+                    await db.collection('tests').doc(code).delete();
+                    // Delete all responses in batch
+                    const responsesSnap = await db.collection('tests').doc(code).collection('responses').get();
+                    const batch = db.batch();
+                    responsesSnap.forEach(d => batch.delete(d.ref));
+                    await batch.commit();
+                    await loadTests(); // refresh list
+                }
+            }
         }
-    })
+    });
 }
 
+
+
+
 document.getElementById('newTestBtn').onclick = () => {
-    currentCode = null; currentTest = null;
+    // Always new ID for new test
+    currentCode = null;
+    currentTest = null;
     document.getElementById('testTitle').value = '';
     document.getElementById('testDuration').value = '';
     document.getElementById('questions').innerHTML = '';
@@ -83,12 +173,14 @@ document.getElementById('newTestBtn').onclick = () => {
 async function openEditor(code) {
     const doc = await db.collection('tests').doc(code).get();
     if (!doc.exists) return;
-    currentCode = code; currentTest = doc.data();
+    currentCode = code;
+    currentTest = doc.data();
     document.getElementById('testTitle').value = currentTest.title || '';
     document.getElementById('testDuration').value = currentTest.duration || 60;
-    const qWrap = document.getElementById('questions'); qWrap.innerHTML = '';
+    const qWrap = document.getElementById('questions');
+    qWrap.innerHTML = '';
     (currentTest.questions || []).forEach(q => addQuestionCard(q));
-    document.getElementById('joinCode').innerHTML = `<div class="test-code-banner">Test Code: ${code}</div>`;
+    document.getElementById('joinCode').innerHTML = `< div class="test-code-banner" > Test Code: ${ code }</ > `;
     show('editor');
 }
 
@@ -97,7 +189,7 @@ function addOption(el) {
     const n = box.querySelectorAll('.option-input').length + 1;
     const input = document.createElement('input');
     input.className = 'option-input';
-    input.placeholder = `Option ${n}`;
+    input.placeholder = `Option ${ n } `;
     input.oninput = syncCorrectOptions;
     box.insertBefore(input, el);
     syncCorrectOptions();
@@ -115,7 +207,7 @@ function syncCorrectOptions() {
         const prev = sel.value;
         sel.innerHTML = '';
         opts.forEach((o, i) => {
-            const op = document.createElement('option'); op.value = String(i + 1); op.textContent = `${i + 1} – ${o || 'Option ' + (i + 1)}`;
+            const op = document.createElement('option'); op.value = String(i + 1); op.textContent = `${ i + 1 } – ${ o || 'Option ' + (i + 1) } `;
             sel.appendChild(op);
         });
         if (opts.length === 0) { const op = document.createElement('option'); op.value = '1'; op.textContent = '1'; sel.appendChild(op); }
@@ -127,14 +219,15 @@ function addQuestionCard(pref) {
     const card = document.createElement('div');
     card.className = 'question-card';
     card.innerHTML = `
-    <div class="q-grid">
-      <input class="q-text" placeholder="Question" value="${pref?.question ? pref.question.replace(/"/g, '&quot;') : ''}">
-      <select class="select q-type">
+            < div class="q-grid" >
+                <input class="q-text" placeholder="Question" value="${pref?.question ? pref.question.replace(/" /g, '&quot;') : ''
+} ">
+    < select class="select q-type" >
         <option value="multiple"${pref?.type === 'multiple' ? ' selected' : ''}>Multiple choice</option>
         <option value="checkboxes"${pref?.type === 'checkboxes' ? ' selected' : ''}>Checkboxes</option>
         <option value="dropdown"${pref?.type === 'dropdown' ? ' selected' : ''}>Dropdown</option>
-      </select>
-    </div>
+      </select >
+    </div >
     <div class="options"></div>
     <div class="correct-wrap">
       <label>Correct:</label>
@@ -147,13 +240,13 @@ function addQuestionCard(pref) {
         <button class="icon-btn delete-btn" title="Delete" onclick="deleteCard(this)">🗑</button>
       </div>
     </div>
-  `;
+`;
 
     const opts = card.querySelector('.options');
     const base = (pref?.options && pref.options.length ? pref.options : ['', '']).slice();
     base.forEach((v, i) => {
         const inp = document.createElement('input');
-        inp.className = 'option-input'; inp.placeholder = `Option ${i + 1}`; inp.value = v || '';
+        inp.className = 'option-input'; inp.placeholder = `Option ${ i + 1 } `; inp.value = v || '';
         inp.oninput = syncCorrectOptions;
         opts.appendChild(inp);
     });
@@ -187,9 +280,9 @@ function validate() {
         const q = c.querySelector('.q-text').value.trim();
         const opts = [...c.querySelectorAll('.option-input')].map(x => x.value.trim()).filter(Boolean);
         const corr = parseInt(c.querySelector('.correct-select').value || '1');
-        if (!q) return { ok: false, msg: `Q${i + 1}: question is required`, el: c.querySelector('.q-text') };
-        if (opts.length < 2) return { ok: false, msg: `Q${i + 1}: at least 2 options`, el: c.querySelector('.option-input') };
-        if (!(corr >= 1 && corr <= opts.length)) return { ok: false, msg: `Q${i + 1}: correct must be 1..${opts.length}`, el: c.querySelector('.correct-select') };
+        if (!q) return { ok: false, msg: `Q${ i + 1 }: question is required`, el: c.querySelector('.q-text') };
+        if (opts.length < 2) return { ok: false, msg: `Q${ i + 1 }: at least 2 options`, el: c.querySelector('.option-input') };
+        if (!(corr >= 1 && corr <= opts.length)) return { ok: false, msg: `Q${ i + 1 }: correct must be 1..${ opts.length } `, el: c.querySelector('.correct-select') };
     }
     return { ok: true };
 }
@@ -212,11 +305,12 @@ document.getElementById('publishBtn').onclick = async () => {
         title, duration, questions,
         teacherId: auth.currentUser?.uid || 'unknown',
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        status: 'pending' // ensure new tests start as pending
+        status: 'pending'
     };
     await db.collection('tests').doc(code).set(payload);
-    currentCode = code; currentTest = payload;
-    document.getElementById('joinCode').innerHTML = `<div class="test-code-banner">Test Code: ${code}</div>`;
+    currentCode = code;
+    currentTest = payload;
+    document.getElementById('joinCode').innerHTML = `< div class="test-code-banner" > Test Code: ${ code }</div > `;
     await loadTests();
     show('list');
 };
@@ -224,38 +318,44 @@ document.getElementById('publishBtn').onclick = async () => {
 // --- Monitor ---
 function openMonitor(code, title) {
     currentCode = code;
-    document.getElementById('monitorTestTitle').textContent = title || '';
-    document.getElementById('monitorCode').textContent = `Code: ${code}`;
+    const monitorTitleEl = document.getElementById('monitorTestTitle');
+    const monitorCodeEl = document.getElementById('monitorCode');
+    const monitorSectionEl = document.getElementById('monitorSection');
+    const studentListEl = document.getElementById('studentList');
 
-    // Clean old controls if any
-    const oldStatus = document.getElementById('testStatus'); if (oldStatus) oldStatus.remove();
-    const oldControls = document.getElementById('monitorControls'); if (oldControls) oldControls.remove();
+    monitorTitleEl.textContent = title || '';
+    monitorCodeEl.textContent = `Code: ${code}`;
 
-    // Status line
+    // Remove old status/count elements if any
+    ['testStatus', 'monitorParticipantCount', 'monitorControls'].forEach(id => {
+        const old = document.getElementById(id);
+        if (old) old.remove();
+    });
+
+    // Status div
     const statusEl = document.createElement('div');
     statusEl.id = 'testStatus';
     statusEl.className = 'code-pill';
     statusEl.style.marginBottom = '10px';
-    statusEl.style.background = '#1b2636';
-    statusEl.style.color = 'var(--ink)';
-    monitorSection.prepend(statusEl);
+    monitorSectionEl.prepend(statusEl);
 
-    // Controls
+    // Participant counts & controls
     const controls = document.createElement('div');
     controls.id = 'monitorControls';
     controls.style.display = 'flex';
     controls.style.gap = '8px';
     controls.style.marginBottom = '10px';
     controls.innerHTML = `
-    <span id="monitorParticipantCount" style="color:var(--sub)"></span>
-    <button id="startTestBtn" class="btn">Start Test</button>
-    <button id="endTestBtn" class="btn ghost" style="display:none;">End Test</button>
-  `;
-    monitorSection.prepend(controls);
+        <span id="monitorParticipantCount" style="color:var(--sub)">Submitted: 0 • Active: 0</span>
+        <button id="startTestBtn" class="btn">Start Test</button>
+        <button id="endTestBtn" class="btn ghost" style="display:none;">End Test</button>
+    `;
+    monitorSectionEl.prepend(controls);
 
-    const startBtn = controls.querySelector('#startTestBtn');
-    const endBtn = controls.querySelector('#endTestBtn');
+    const startBtn = document.getElementById('startTestBtn');
+    const endBtn = document.getElementById('endTestBtn');
 
+    // Start / End logic
     startBtn.onclick = async () => {
         await db.collection('tests').doc(code).set({
             status: 'active',
@@ -267,84 +367,68 @@ function openMonitor(code, title) {
         await db.collection('tests').doc(code).set({ status: 'ended' }, { merge: true });
     };
 
-    // Status watcher (and label "Pending/Started/Midway/Ended")
+    // Listen to test status changes
     if (unsubStatus) unsubStatus();
     unsubStatus = db.collection('tests').doc(code).onSnapshot(docSnap => {
         const t = docSnap.data() || {};
-        // Button visibility
-        if (t.status === 'active') { startBtn.style.display = 'none'; endBtn.style.display = 'inline-block'; }
-        else if (t.status === 'ended') { startBtn.style.display = 'inline-block'; startBtn.disabled = false; endBtn.style.display = 'none'; }
-        else { startBtn.style.display = 'inline-block'; startBtn.disabled = false; endBtn.style.display = 'none'; }
-
-        // Status label text
-        let label = 'Pending';
-        if (t.status === 'ended') label = 'Ended';
+        let label = 'Pending', bgColor = '#555';
         if (t.status === 'active') {
-            label = 'Started';
+            label = 'Active'; bgColor = 'var(--ok)';
             if (t.startedAt && t.duration) {
                 const startedMs = t.startedAt.toMillis ? t.startedAt.toMillis() : new Date(t.startedAt).getTime();
                 const total = (t.duration || 0) * 60000;
                 const elapsed = Math.max(0, Date.now() - startedMs);
                 const remaining = Math.max(0, total - elapsed);
-                const isMidway = elapsed >= total / 2 && remaining > 0;
-                if (isMidway) label = 'Midway';
-                const mins = Math.floor(remaining / 60000);
-                const secs = Math.floor((remaining % 60000) / 1000);
-                label += ` — ${mins}:${secs.toString().padStart(2, '0')} left`;
+                if (elapsed >= total / 2 && remaining > 0) {
+                    label = 'Midway'; bgColor = 'orange';
+                }
             }
+            startBtn.style.display = 'none';
+            endBtn.style.display = 'inline-block';
+        } else if (t.status === 'ended') {
+            label = 'Ended'; bgColor = 'var(--danger)';
+            startBtn.style.display = 'inline-block'; startBtn.disabled = false;
+            endBtn.style.display = 'none';
+        } else { // pending
+            label = 'Pending'; bgColor = '#555';
+            startBtn.style.display = 'inline-block'; startBtn.disabled = false;
+            endBtn.style.display = 'none';
         }
         statusEl.textContent = `Status: ${label}`;
+        statusEl.style.background = bgColor;
     });
 
-    // Student list watcher
+    // Listen to responses and update counts
     if (unsubMonitor) unsubMonitor();
-    const list = document.getElementById('studentList');
-    unsubMonitor = db.collection('tests').doc(code).collection('responses').onSnapshot(async snap => {
-        const testDoc = await db.collection('tests').doc(code).get();
-        const test = testDoc.data() || { questions: [] };
-        const total = test.questions.length;
-        const status = test.status || 'pending';
+    unsubMonitor = db.collection('tests').doc(code).collection('responses')
+        .onSnapshot(snap => {
+            let submitted = 0, active = 0;
+            studentListEl.innerHTML = '';
+            snap.forEach(d => {
+                const data = d.data();
+                if (data.tabStatus === 'Submitted') submitted++;
+                else active++;
 
-        let waitingCount = 0;
-        list.innerHTML = '';
+                const answersCount = countAnswered(data.answers);
+                const score = (currentTest?.questions) ? calcScore(currentTest.questions, data.answers || {}) : '—';
+                const li = document.createElement('li');
+                li.className = data.tabStatus === 'Submitted' ? 'active' : 'active';
+                const st = data.tabStatus === 'Submitted' ? '✔ Submitted' :
+                    (data.tabStatus === 'Out of Tab' ? 'Out of Tab' : 'Active');
+                li.innerHTML = `
+                    <div><strong>${data.name || 'Student'}</strong></div>
+                    <div>Answered: ${answersCount}/${(currentTest?.questions || []).length} • Score: ${score}/${(currentTest?.questions || []).length} • ${st}</div>
+                `;
+                studentListEl.appendChild(li);
+            });
 
-        snap.forEach(d => {
-            const data = d.data();
-            const answered = countAnswered(data.answers);
-
-            if (status === 'pending' && data.tabStatus !== 'Submitted') {
-                waitingCount++;
-            }
-
-            let scoreDisplay = '—';
-            if (status === 'active' || status === 'ended') {
-                scoreDisplay = calcScore(test.questions, data.answers || {});
-            }
-
-            // Keep green even if submitted
-            const isGreen = true;
-            const li = document.createElement('li');
-            li.className = isGreen ? 'active' : 'out';
-            const st = data.tabStatus === 'Submitted' ? '✔ Submitted' :
-                (data.tabStatus === 'Out of Tab' ? 'Out of Tab' : 'Active');
-            li.innerHTML = `<div><strong>${data.name || 'Student'}</strong></div>
-                    <div>Answered: ${answered}/${total} • Score: ${scoreDisplay}/${total} • ${st}</div>`;
-            list.appendChild(li);
+            const countEl = document.getElementById('monitorParticipantCount');
+            if (countEl) countEl.textContent = `Submitted: ${submitted} • Active: ${active}`;
         });
-
-        // Show waiting count above the list if pending
-        const waitInfo = document.getElementById('waitInfo') || (() => {
-            const el = document.createElement('div');
-            el.id = 'waitInfo';
-            el.style.marginBottom = '8px';
-            document.getElementById('monitorSection').insertBefore(el, list);
-            return el;
-        })();
-        waitInfo.textContent = status === 'pending' ? `Waiting in queue: ${waitingCount}` : '';
-    });
 
     show('monitor');
 }
+
 
 function countAnswered(answers) {
     if (!answers) return 0;
