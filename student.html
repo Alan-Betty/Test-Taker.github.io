@@ -1,158 +1,208 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="UTF-8">
-  <title>Student – Take Test</title>
-  <link rel="stylesheet" href="index.css">
-  <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
-  <script src="config-file.js"></script>
-</head>
-<body>
-  <div class="navbar"><button class="tab active">Take Test</button></div>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Student – Take Test</title>
+    <link rel="stylesheet" href="index.css" />
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="config-file.js"></script>
+  </head>
+  <body>
+    <div class="navbar"><button class="tab active">Take Test</button></div>
 
-  <div class="container">
-    <div class="section">
-      <div class="header-row">
-        <input id="studentName" class="input" type="text" placeholder="Your name" required>
-        <input id="testCode" class="input" type="text" placeholder="Test code" required>
-      </div>
-      <div class="row">
-        <button id="joinBtn" class="btn">Join</button>
-      </div>
+    <div class="container">
+      <div class="section">
+        <div class="header-row">
+          <input
+            id="studentName"
+            class="input"
+            type="text"
+            placeholder="Your name"
+            required
+          />
+          <input
+            id="testCode"
+            class="input"
+            type="text"
+            placeholder="Test code"
+            required
+          />
+        </div>
+        <div class="row">
+          <button id="joinBtn" class="btn">Join</button>
+        </div>
 
-      <div id="testMeta" class="row" style="margin-top:12px;display:none">
-        <span id="testTitle" class="code-pill" style="background:#1b2636;color:var(--ink)"></span>
-        <span id="testBanner" class="code-pill"></span>
-      </div>
+        <div id="testMeta" class="row" style="margin-top: 12px; display: none">
+          <span
+            id="testTitle"
+            class="code-pill"
+            style="background: #1b2636; color: var(--ink)"
+          ></span>
+          <span id="testBanner" class="code-pill"></span>
+        </div>
 
-      <div id="testArea" style="display:none;margin-top:14px;">
-        <form id="testForm"></form>
-        <div class="row" style="margin-top:10px">
-          <button id="submitBtn" class="btn">Submit Test</button>
+        <div id="testArea" style="display: none; margin-top: 14px">
+          <form id="testForm"></form>
+          <div class="row" style="margin-top: 10px">
+            <button id="submitBtn" class="btn">Submit Test</button>
+          </div>
+        </div>
+
+        <!-- Waiting Screen -->
+        <div
+          id="waitingScreen"
+          style="
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+          "
+        >
+          <div class="loader"></div>
+          <p class="waiting-text">Waiting for host to start the test...</p>
+          <p class="waiting-count" id="waitingCount"></p>
+        </div>
+
+        <!-- Timer Display -->
+        <div
+          id="timerDisplay"
+          class="timer-display"
+          style="display: none"
+        ></div>
+
+        <!-- Result Screen -->
+        <div id="resultScreen" style="display: none; text-align: center">
+          <h2>Test Completed!</h2>
+          <p>Score: <span id="scoreValue"></span></p>
+          <p>
+            Correct: <span id="correctCount"></span> | Wrong:
+            <span id="wrongCount"></span>
+          </p>
         </div>
       </div>
     </div>
-  </div>
 
-<script>
-if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-const db=firebase.firestore();
+    <script>
+      // if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      // const db=firebase.firestore();
 
-let studentId='s_'+Math.random().toString(36).slice(2,10);
-let currentCode='', studentName='', order=[], test=null;
-let answers={}; // q{origIndex} -> number | number[]
+      // let studentId='s_'+Math.random().toString(36).slice(2,10);
+      // let currentCode='', studentName='', order=[], test=null;
+      // let answers={}; // q{origIndex} -> number | number[]
 
-document.getElementById('joinBtn').onclick=async()=>{
-  currentCode=document.getElementById('testCode').value.trim();
-  studentName=document.getElementById('studentName').value.trim();
-  if(!currentCode||!studentName){alert('Enter your name and test code');return;}
-  const tDoc=await db.collection('tests').doc(currentCode).get();
-  if(!tDoc.exists){alert('Invalid test code');return;}
-  test=tDoc.data(); if(!test.questions?.length){alert('No questions in this test');return;}
+      // document.getElementById('joinBtn').onclick=async()=>{
+      //   currentCode=document.getElementById('testCode').value.trim();
+      //   studentName=document.getElementById('studentName').value.trim();
+      //   if(!currentCode||!studentName){alert('Enter your name and test code');return;}
+      //   const tDoc=await db.collection('tests').doc(currentCode).get();
+      //   if(!tDoc.exists){alert('Invalid test code');return;}
+      //   test=tDoc.data(); if(!test.questions?.length){alert('No questions in this test');return;}
 
-  const respRef=db.collection('tests').doc(currentCode).collection('responses').doc(studentId);
-  const respSnap=await respRef.get();
-  if(respSnap.exists && Array.isArray(respSnap.data().order) && respSnap.data().order.length===test.questions.length){
-    order=respSnap.data().order;
-  }else{
-    order=[...Array(test.questions.length).keys()].sort(()=>Math.random()-0.5);
-    await respRef.set({name:studentName,tabStatus:'Active',answers:{},order},{merge:true});
-  }
+      //   const respRef=db.collection('tests').doc(currentCode).collection('responses').doc(studentId);
+      //   const respSnap=await respRef.get();
+      //   if(respSnap.exists && Array.isArray(respSnap.data().order) && respSnap.data().order.length===test.questions.length){
+      //     order=respSnap.data().order;
+      //   }else{
+      //     order=[...Array(test.questions.length).keys()].sort(()=>Math.random()-0.5);
+      //     await respRef.set({name:studentName,tabStatus:'Active',answers:{},order},{merge:true});
+      //   }
 
-  document.getElementById('testMeta').style.display='flex';
-  document.getElementById('testTitle').textContent=test.title||'';
-  document.getElementById('testBanner').textContent='Code: '+currentCode;
+      //   document.getElementById('testMeta').style.display='flex';
+      //   document.getElementById('testTitle').textContent=test.title||'';
+      //   document.getElementById('testBanner').textContent='Code: '+currentCode;
 
-  renderQuestions();
-  document.getElementById('testArea').style.display='block';
+      //   renderQuestions();
+      //   document.getElementById('testArea').style.display='block';
 
-  document.addEventListener('visibilitychange',async()=>{
-    await respRef.set({name:studentName,tabStatus:document.hidden?'Out of Tab':'Active'},{merge:true});
-  });
-  await respRef.set({name:studentName,tabStatus:'Active'},{merge:true});
-};
+      //   document.addEventListener('visibilitychange',async()=>{
+      //     await respRef.set({name:studentName,tabStatus:document.hidden?'Out of Tab':'Active'},{merge:true});
+      //   });
+      //   await respRef.set({name:studentName,tabStatus:'Active'},{merge:true});
+      // };
 
-function renderQuestions(){
-  const form=document.getElementById('testForm'); form.innerHTML='';
-  order.forEach((origIdx,i)=>{
-    const q=test.questions[origIdx];
-    const card=document.createElement('div'); card.className='question-card';
-    const reqBadge=q.required?'<span class="code-pill" style="background:#2a3548;color:var(--ink)">Required</span>':'';
-    let body='';
-    if(q.type==='dropdown'){
-      const opts=q.options.map((o,idx)=>`<option value="${idx+1}">${o}</option>`).join('');
-      body=`<select class="select pretty" name="q${origIdx}"><option value="">Select...</option>${opts}</select>`;
-    }else if(q.type==='checkboxes'){
-      body=q.options.map((o,idx)=>`
-        <label class="choice">
-          <input type="checkbox" name="q${origIdx}" value="${idx+1}">
-          <span>${o}</span>
-        </label>
-      `).join('');
-    }else{
-      body=q.options.map((o,idx)=>`
-        <label class="choice">
-          <input type="radio" name="q${origIdx}" value="${idx+1}">
-          <span>${o}</span>
-        </label>
-      `).join('');
-    }
-    card.innerHTML=`
-      <div class="q-grid" style="grid-template-columns:1fr auto">
-        <div class="q-text" style="border:0;padding:0;font-weight:800">${i+1}. ${q.question}</div>
-        ${reqBadge}
-      </div>
-      <div class="options" style="margin-top:6px">${body}</div>
-    `;
-    form.appendChild(card);
-  });
+      // function renderQuestions(){
+      //   const form=document.getElementById('testForm'); form.innerHTML='';
+      //   order.forEach((origIdx,i)=>{
+      //     const q=test.questions[origIdx];
+      //     const card=document.createElement('div'); card.className='question-card';
+      //     const reqBadge=q.required?'<span class="code-pill" style="background:#2a3548;color:var(--ink)">Required</span>':'';
+      //     let body='';
+      //     if(q.type==='dropdown'){
+      //       const opts=q.options.map((o,idx)=>`<option value="${idx+1}">${o}</option>`).join('');
+      //       body=`<select class="select pretty" name="q${origIdx}"><option value="">Select...</option>${opts}</select>`;
+      //     }else if(q.type==='checkboxes'){
+      //       body=q.options.map((o,idx)=>`
+      //         <label class="choice">
+      //           <input type="checkbox" name="q${origIdx}" value="${idx+1}">
+      //           <span>${o}</span>
+      //         </label>
+      //       `).join('');
+      //     }else{
+      //       body=q.options.map((o,idx)=>`
+      //         <label class="choice">
+      //           <input type="radio" name="q${origIdx}" value="${idx+1}">
+      //           <span>${o}</span>
+      //         </label>
+      //       `).join('');
+      //     }
+      //     card.innerHTML=`
+      //       <div class="q-grid" style="grid-template-columns:1fr auto">
+      //         <div class="q-text" style="border:0;padding:0;font-weight:800">${i+1}. ${q.question}</div>
+      //         ${reqBadge}
+      //       </div>
+      //       <div class="options" style="margin-top:6px">${body}</div>
+      //     `;
+      //     form.appendChild(card);
+      //   });
 
-  form.onchange=async(e)=>{
-    const name=e.target.name; if(!name) return;
-    if(e.target.type==='checkbox'){
-      const group=[...form.querySelectorAll(`input[name="${name}"]:checked`)].map(x=>parseInt(x.value));
-      answers[name]=group;
-    }else{
-      answers[name]=e.target.value?parseInt(e.target.value):null;
-    }
-    await db.collection('tests').doc(currentCode).collection('responses').doc(studentId)
-      .set({name:studentName,answers},{merge:true});
-  };
-}
+      //   form.onchange=async(e)=>{
+      //     const name=e.target.name; if(!name) return;
+      //     if(e.target.type==='checkbox'){
+      //       const group=[...form.querySelectorAll(`input[name="${name}"]:checked`)].map(x=>parseInt(x.value));
+      //       answers[name]=group;
+      //     }else{
+      //       answers[name]=e.target.value?parseInt(e.target.value):null;
+      //     }
+      //     await db.collection('tests').doc(currentCode).collection('responses').doc(studentId)
+      //       .set({name:studentName,answers},{merge:true});
+      //   };
+      // }
 
-document.getElementById('submitBtn').onclick=async(e)=>{
-  e.preventDefault();
-  if(!currentCode||!test) return;
+      // document.getElementById('submitBtn').onclick=async(e)=>{
+      //   e.preventDefault();
+      //   if(!currentCode||!test) return;
 
-  if(!validateRequired()){alert('Please answer all required questions.');return;}
+      //   if(!validateRequired()){alert('Please answer all required questions.');return;}
 
-  const form=document.getElementById('testForm');
-  form.querySelectorAll('input[type="radio"]:checked').forEach(inp=>answers[inp.name]=parseInt(inp.value));
-  form.querySelectorAll('select').forEach(sel=>{ if(sel.value) answers[sel.name]=parseInt(sel.value); });
+      //   const form=document.getElementById('testForm');
+      //   form.querySelectorAll('input[type="radio"]:checked').forEach(inp=>answers[inp.name]=parseInt(inp.value));
+      //   form.querySelectorAll('select').forEach(sel=>{ if(sel.value) answers[sel.name]=parseInt(sel.value); });
 
-  const ref=db.collection('tests').doc(currentCode).collection('responses').doc(studentId);
-  await ref.set({name:studentName,answers,tabStatus:'Submitted'},{merge:true});
+      //   const ref=db.collection('tests').doc(currentCode).collection('responses').doc(studentId);
+      //   await ref.set({name:studentName,answers,tabStatus:'Submitted'},{merge:true});
 
-  form.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);
-  alert('Submitted!');
-};
+      //   form.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);
+      //   alert('Submitted!');
+      // };
 
-function validateRequired(){
-  for(let i=0;i<test.questions.length;i++){
-    const q=test.questions[i]; if(!q.required) continue;
-    const key='q'+i;
-    if(q.type==='checkboxes'){
-      const arr=answers[key]||[];
-      if(!Array.isArray(arr)||arr.length===0) return false;
-    }else if(q.type==='dropdown'){
-      if(!answers[key]||answers[key]===null) return false;
-    }else{
-      if(!answers[key]||answers[key]===null) return false;
-    }
-  }
-  return true;
-}
-</script>
-</body>
+      // function validateRequired(){
+      //   for(let i=0;i<test.questions.length;i++){
+      //     const q=test.questions[i]; if(!q.required) continue;
+      //     const key='q'+i;
+      //     if(q.type==='checkboxes'){
+      //       const arr=answers[key]||[];
+      //       if(!Array.isArray(arr)||arr.length===0) return false;
+      //     }else if(q.type==='dropdown'){
+      //       if(!answers[key]||answers[key]===null) return false;
+      //     }else{
+      //       if(!answers[key]||answers[key]===null) return false;
+      //     }
+      //   }
+      //   return true;
+      // }
+    </script>
+    <script src="student.js"></script>
+  </body>
 </html>
